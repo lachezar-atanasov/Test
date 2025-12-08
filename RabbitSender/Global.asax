@@ -1,1 +1,1 @@
-<%@ Application Language="C#" CodeBehind="Global.asax.cs" Inherits="RabbitSender.Global" %>
+<%@ Application Codebehind="Global.asax.cs" Inherits="RabbitSender.WebApiApplication" Language="C#" %>

@@ -25,30 +25,30 @@
   <ItemGroup>
     <Reference Include="System" />
     <Reference Include="System.Configuration" />
+    <Reference Include="System.Net.Http" />
     <Reference Include="System.Web" />
-    <Reference Include="System.Web.Services" />
+    <Reference Include="System.Web.Http" />
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="log4net" Version="2.0.15" />
+    <PackageReference Include="Microsoft.AspNet.WebApi" Version="5.2.9" />
     <PackageReference Include="RabbitMQ.Client" Version="6.5.0" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="App_Start\WebApiConfig.cs" />
+    <Compile Include="Controllers\RabbitSenderController.cs" />
     <Compile Include="Global.asax.cs">
       <DependentUpon>Global.asax</DependentUpon>
     </Compile>
     <Compile Include="Interfaces\ILeadParameterService.cs" />
     <Compile Include="Models\RabbitConnectionParams.cs" />
-    <Compile Include="RabbitSenderService.asmx.cs">
-      <DependentUpon>RabbitSenderService.asmx</DependentUpon>
-    </Compile>
     <Compile Include="Services\LeadParameterService.cs" />
     <Compile Include="Services\RabbitMessageSenderService.cs" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="Global.asax" />
-    <Content Include="RabbitSenderService.asmx" />
     <Content Include="Web.config" />
   </ItemGroup>
-  <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\WebApplications\Microsoft.WebApplication.targets" Condition="false" />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
