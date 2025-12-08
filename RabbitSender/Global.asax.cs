@@ -1,18 +1,32 @@
 using System;
 using System.Configuration;
+using System.Web;
 using RabbitSender.Models;
 using RabbitSender.Services;
 
 namespace RabbitSender
 {
-    class Program
+    public class Global : HttpApplication
     {
-        static void Main(string[] args)
+        private static RabbitMessageSenderService _sender;
+        private static RabbitConnectionParams _params;
+
+        public static RabbitMessageSenderService Sender
+        {
+            get { return _sender; }
+        }
+
+        public static RabbitConnectionParams Params
+        {
+            get { return _params; }
+        }
+
+        protected void Application_Start(object sender, EventArgs e)
         {
             string allegroUrl = ConfigurationManager.AppSettings["AllegroUrl"];
             var leadService = new LeadParameterService();
 
-            var rabbitParams = new RabbitConnectionParams
+            _params = new RabbitConnectionParams
             {
                 ServerName = leadService.GetParameter(allegroUrl, "RabbitMQ", "ServerName"),
                 QueueName = leadService.GetParameter(allegroUrl, "RabbitMQ", "QueueName"),
@@ -25,25 +39,17 @@ namespace RabbitSender
                 ServerCN = leadService.GetParameter(allegroUrl, "RabbitMQ", "ServerCN")
             };
 
-            using (var sender = new RabbitMessageSenderService())
-            {
-                sender.Connect(rabbitParams);
-
-                string message = args.Length > 0 ? args[0] : GetSampleMessage();
-
-                sender.Send(rabbitParams.QueueName, message);
-                Console.WriteLine("Message sent to queue: " + rabbitParams.QueueName);
-            }
+            _sender = new RabbitMessageSenderService();
+            _sender.Connect(_params);
         }
 
-        static string GetSampleMessage()
+        protected void Application_End(object sender, EventArgs e)
         {
-            return @"<?xml version=""1.0"" encoding=""UTF-8"" standalone=""yes""?>
-<trade>
-<tradeId>12345</tradeId>
-<instrumentId>K10001126</instrumentId>
-<product>KGermany Base Weekend</product>
-</trade>";
+            if (_sender != null)
+            {
+                _sender.Dispose();
+                _sender = null;
+            }
         }
     }
 }
