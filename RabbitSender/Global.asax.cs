@@ -6,6 +6,7 @@ using log4net.Repository.Hierarchy;
 using System;
 using System.Configuration;
 using System.IO;
+using System.Web.Http;
 using RabbitSender.Models;
 using RabbitSender.Services;
 
@@ -28,10 +29,11 @@ namespace RabbitSender
 
         protected void Application_Start()
         {
+            GlobalConfiguration.Configure(WebApiConfig.Register);
             ConfigureLogging();
 
             var log = LogManager.GetLogger(typeof(WebApiApplication));
-            log.Info("Log4net initialized successfully.");
+            log.Info("Log4net initialized.");
 
             try
             {
@@ -54,11 +56,11 @@ namespace RabbitSender
                 _sender = new RabbitMessageSenderService();
                 _sender.Connect(_params);
 
-                log.Info("RabbitMQ sender connected successfully.");
+                log.Info("RabbitMQ sender connected.");
             }
             catch (Exception ex)
             {
-                log.Error("Failed to connect RabbitMQ sender during Application_Start.", ex);
+                log.Error("Failed to start.", ex);
                 throw;
             }
         }
@@ -74,8 +76,7 @@ namespace RabbitSender
 
         private void ConfigureLogging()
         {
-            string appRoot = AppDomain.CurrentDomain.BaseDirectory;
-            string logFolder = Path.Combine(appRoot, "Logs");
+            string logFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Logs");
 
             if (!Directory.Exists(logFolder))
             {
@@ -88,7 +89,7 @@ namespace RabbitSender
             };
             layout.ActivateOptions();
 
-            var rollingAppender = new RollingFileAppender
+            var appender = new RollingFileAppender
             {
                 Name = "RollingFileAppender",
                 File = Path.Combine(logFolder, "RabbitSender.log"),
@@ -98,15 +99,13 @@ namespace RabbitSender
                 Layout = layout,
                 LockingModel = new FileAppender.MinimalLock()
             };
-            rollingAppender.ActivateOptions();
+            appender.ActivateOptions();
 
             var hierarchy = (Hierarchy)LogManager.GetRepository();
-            hierarchy.Root.AddAppender(rollingAppender);
+            hierarchy.Root.AddAppender(appender);
 
             string levelName = ConfigurationManager.AppSettings["LogLevel"] ?? "DEBUG";
-            Level level = hierarchy.LevelMap[levelName.ToUpper()] ?? Level.Debug;
-            hierarchy.Root.Level = level;
-
+            hierarchy.Root.Level = hierarchy.LevelMap[levelName.ToUpper()] ?? Level.Debug;
             hierarchy.Configured = true;
         }
     }
