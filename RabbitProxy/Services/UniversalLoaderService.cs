@@ -39,8 +39,8 @@ namespace RabbitProxy.Services
                     "<soap12:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" xmlns:soap12=\"http://www.w3.org/2003/05/soap-envelope\">" +
                     "<soap12:Body>" +
                     "<ImportFileConfigured xmlns=\"http://tempuri.org/\">" +
-                    "<allegroURL>" + SecurityElement.Escape(allegroUrl) + "</allegroURL>" +
-                    "<configurationName>" + SecurityElement.Escape(configurationName) + "</configurationName>" +
+                    "<allegroURL>" + allegroUrl + "</allegroURL>" +
+                    "<configurationName>" + configurationName + "</configurationName>" +
                     "<fileLoaderConfig>" +
                     "<Data>" + Convert.ToBase64String(Encoding.UTF8.GetBytes(xmlData)) + "</Data>" +
                     "<FileFormat>XML</FileFormat>" +
