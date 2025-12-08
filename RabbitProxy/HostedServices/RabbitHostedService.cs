@@ -52,9 +52,6 @@ namespace RabbitProxy.HostedServices
         {
             return (msg, channel, tag) =>
             {
-                bool shouldAck = false;
-                bool shouldNack = false;
-
                 try
                 {
                     string tradeTypeToProcess = _leadService.GetParameter(allegroUrl, "RabbitMQ", "TAllowedType");
@@ -70,7 +67,7 @@ namespace RabbitProxy.HostedServices
 
                     if (string.IsNullOrWhiteSpace(xml))
                     {
-                        shouldAck = true;
+                        SafeAck(channel, tag);
                         Log.Info("Message skipped because no trades matched the configured product.");
                         return;
                     }
@@ -80,39 +77,34 @@ namespace RabbitProxy.HostedServices
 
                     if (uploaded)
                     {
-                        shouldAck = true;
+                        SafeAck(channel, tag);
                         Log.Info("Message acknowledged. Queue: " + rabbitParams.QueueName);
                     }
                     else
                     {
-                        shouldNack = true;
-                        Log.Error("Upload failed. Message will be requeued. Raw message: " + msg);
+                        Log.Error("Upload failed. Message left unacknowledged for retry on next run. Raw message: " + msg);
                     }
                 }
                 catch (Exception ex)
                 {
-                    shouldNack = true;
-                    Log.Error("Error processing message. Message will be requeued.", ex);
-                }
-                finally
-                {
-                    try
-                    {
-                        if (shouldAck && channel.IsOpen)
-                        {
-                            channel.BasicAck(tag, false);
-                        }
-                        else if (shouldNack && channel.IsOpen)
-                        {
-                            channel.BasicNack(tag, false, true);
-                        }
-                    }
-                    catch (Exception ackEx)
-                    {
-                        Log.Error("Failed to ack/nack message", ackEx);
-                    }
+                    Log.Error("Error processing message. Message left unacknowledged for retry on next run.", ex);
                 }
             };
+        }
+
+        private void SafeAck(IModel channel, ulong tag)
+        {
+            try
+            {
+                if (channel.IsOpen)
+                {
+                    channel.BasicAck(tag, false);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Failed to acknowledge message", ex);
+            }
         }
     }
 }
