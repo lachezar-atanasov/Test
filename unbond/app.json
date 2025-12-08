@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "Unbond",
+    "slug": "unbond",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FAFAFA"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.unbond.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FAFAFA"
+      },
+      "package": "com.unbond.app",
+      "edgeToEdgeEnabled": true
+    },
+    "extra": {
+      "appName": "Unbond",
+      "appDescription": "Trauma Bond Recovery Companion"
+    }
+  }
+}
