@@ -6,7 +6,6 @@ using log4net.Repository.Hierarchy;
 using System;
 using System.Configuration;
 using System.IO;
-using System.Web.Http;
 using RabbitSender.Models;
 using RabbitSender.Services;
 
@@ -29,7 +28,6 @@ namespace RabbitSender
 
         protected void Application_Start()
         {
-            GlobalConfiguration.Configure(WebApiConfig.Register);
             ConfigureLogging();
 
             var log = LogManager.GetLogger(typeof(WebApiApplication));
