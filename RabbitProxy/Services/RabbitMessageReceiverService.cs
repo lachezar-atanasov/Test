@@ -51,7 +51,22 @@ namespace RabbitProxy.Services
             _channelKey = _lastParameters.ServerName + ":" + _lastParameters.QueueName;
             var channel = _connectionHolder.GetOrCreateChannel(_channelKey);
 
-            channel.QueueDeclarePassive(_lastParameters.QueueName);
+            try
+            {
+                channel.QueueDeclarePassive(_lastParameters.QueueName);
+            }
+            catch (RabbitMQ.Client.Exceptions.OperationInterruptedException ex)
+            {
+                _connectionHolder.RemoveChannel(_channelKey);
+                _channelKey = null;
+
+                if (ex.ShutdownReason != null && ex.ShutdownReason.ReplyCode == 404)
+                {
+                    throw new InvalidOperationException("Queue '" + _lastParameters.QueueName + "' does not exist. It may have been deleted.", ex);
+                }
+                throw;
+            }
+
             channel.BasicQos(0, 1, false);
 
             var consumer = new EventingBasicConsumer(channel);
@@ -151,9 +166,14 @@ namespace RabbitProxy.Services
                         return;
                     }
                 }
+                catch (InvalidOperationException ex) when (ex.Message.Contains("does not exist"))
+                {
+                    Log.Warn("Queue not found. Will retry in " + delay + "ms... (" + ex.Message + ")");
+                    delay = Math.Min(delay * 2, MaxRestartDelayMs);
+                }
                 catch (Exception ex)
                 {
-                    Log.Error("Failed to restart consumer. Will retry...", ex);
+                    Log.Error("Failed to restart consumer. Will retry in " + delay + "ms...", ex);
                     delay = Math.Min(delay * 2, MaxRestartDelayMs);
                 }
             }
