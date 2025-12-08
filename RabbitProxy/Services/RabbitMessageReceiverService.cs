@@ -9,86 +9,112 @@ using RabbitProxy.Interfaces;
 
 namespace RabbitProxy.Services
 {
-    public class RabbitMessageReceiverService : IRabbitMessageReceiverService
+    public class RabbitMessageReceiverService : IRabbitMessageReceiverService, IDisposable
     {
         private static readonly ILog Log = LogManager.GetLogger(typeof(RabbitMessageReceiverService));
 
         private readonly object _lock = new object();
-        private readonly RabbitMQConnectionHolder _connectionHolder = new RabbitMQConnectionHolder();
-
-        private string _channelKey;
-        private RabbitConnectionParams _lastParameters;
-        private Action<string, IModel, ulong> _lastHandler;
+        private IConnection _connection;
+        private IModel _channel;
+        private RabbitConnectionParams _parameters;
+        private Action<string, IModel, ulong> _handler;
         private volatile bool _stopped;
-        private volatile bool _isConsuming;
-
-        private const int MaxRestartDelayMs = 60000;
-        private const int InitialRestartDelayMs = 1000;
 
         public void StartConsuming(RabbitConnectionParams parameters, Action<string, IModel, ulong> handleMessage)
         {
             lock (_lock)
             {
-                if (_isConsuming)
-                {
-                    throw new InvalidOperationException("Consumer is already running. Call Stop() first.");
-                }
-
-                _lastParameters = parameters;
-                _lastHandler = handleMessage;
+                _parameters = parameters;
+                _handler = handleMessage;
                 _stopped = false;
-
-                _connectionHolder.ChannelLost += OnChannelLost;
-
-                StartConsumerInternal();
+                Connect();
             }
         }
 
-        private void StartConsumerInternal()
+        private void Connect()
         {
-            _connectionHolder.EnsureConnected(_lastParameters);
+            int delay = 1000;
 
-            _channelKey = _lastParameters.ServerName + ":" + _lastParameters.QueueName;
-            var channel = _connectionHolder.GetOrCreateChannel(_channelKey);
+            while (!_stopped)
+            {
+                try
+                {
+                    CleanupChannel();
+                    CleanupConnection();
+
+                    var factory = new ConnectionFactory
+                    {
+                        HostName = _parameters.ServerName,
+                        Port = _parameters.Port,
+                        UserName = _parameters.Username,
+                        Password = _parameters.Password,
+                        VirtualHost = _parameters.VirtualHost,
+                        RequestedConnectionTimeout = TimeSpan.FromMilliseconds(_parameters.Timeout),
+                        AutomaticRecoveryEnabled = true,
+                        NetworkRecoveryInterval = TimeSpan.FromSeconds(10),
+                        Ssl = new SslOption
+                        {
+                            Enabled = _parameters.SSLEnabled,
+                            ServerName = _parameters.ServerCN ?? _parameters.ServerName,
+                            Version = System.Security.Authentication.SslProtocols.Tls12
+                        }
+                    };
+
+                    _connection = factory.CreateConnection();
+                    _channel = _connection.CreateModel();
+                    _channel.BasicQos(0, 1, false);
+                    _channel.QueueDeclarePassive(_parameters.QueueName);
+
+                    var consumer = new EventingBasicConsumer(_channel);
+                    consumer.Received += OnMessageReceived;
+                    consumer.Shutdown += OnConsumerShutdown;
+
+                    _channel.BasicConsume(_parameters.QueueName, false, consumer);
+
+                    Log.Info("Started consuming queue '" + _parameters.QueueName + "' on " + _parameters.ServerName + ":" + _parameters.Port);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    Log.Error("Connection failed. Retrying in " + delay + "ms...", ex);
+                    Thread.Sleep(delay);
+                    delay = Math.Min(delay * 2, 60000);
+                }
+            }
+        }
+
+        private void OnMessageReceived(object sender, BasicDeliverEventArgs ea)
+        {
+            if (_stopped)
+            {
+                return;
+            }
 
             try
             {
-                channel.QueueDeclarePassive(_lastParameters.QueueName);
+                string msg = Encoding.UTF8.GetString(ea.Body.ToArray());
+                Log.Debug("Received message: " + msg);
+                _handler(msg, _channel, ea.DeliveryTag);
             }
-            catch (RabbitMQ.Client.Exceptions.OperationInterruptedException ex)
+            catch (Exception ex)
             {
-                _connectionHolder.RemoveChannel(_channelKey);
-                _channelKey = null;
-
-                if (ex.ShutdownReason != null && ex.ShutdownReason.ReplyCode == 404)
-                {
-                    throw new InvalidOperationException("Queue '" + _lastParameters.QueueName + "' does not exist. It may have been deleted.", ex);
-                }
-                throw;
+                Log.Error("Error in message handler", ex);
             }
-
-            channel.BasicQos(0, 1, false);
-
-            var consumer = new EventingBasicConsumer(channel);
-
-            consumer.Received += OnMessageReceived;
-
-            consumer.Shutdown += (s, e) =>
-            {
-                Log.Error("Consumer shutdown: " + e.ReplyText);
-            };
-
-            channel.BasicConsume(_lastParameters.QueueName, false, consumer);
-            _isConsuming = true;
-
-            Log.Info("Started consuming queue '" + _lastParameters.QueueName + "' on host '" + _lastParameters.ServerName + ":" + _lastParameters.Port + "'");
         }
 
-        private void OnMessageReceived(object model, BasicDeliverEventArgs ea)
+        private void OnConsumerShutdown(object sender, ShutdownEventArgs e)
         {
-            IModel channel;
-            Action<string, IModel, ulong> handler;
+            if (_stopped)
+            {
+                return;
+            }
 
+            Log.Error("Consumer shutdown: " + e.ReplyText);
+            ThreadPool.QueueUserWorkItem(_ => Reconnect());
+        }
+
+        private void Reconnect()
+        {
             lock (_lock)
             {
                 if (_stopped)
@@ -96,86 +122,8 @@ namespace RabbitProxy.Services
                     return;
                 }
 
-                handler = _lastHandler;
-                if (_channelKey == null)
-                {
-                    return;
-                }
-
-                channel = ((EventingBasicConsumer)model).Model;
-            }
-
-            try
-            {
-                string msg = Encoding.UTF8.GetString(ea.Body.ToArray());
-                Log.Debug("Received Rabbit message: " + msg);
-                handler(msg, channel, ea.DeliveryTag);
-            }
-            catch (Exception ex)
-            {
-                Log.Error("Unhandled exception in message handler", ex);
-            }
-        }
-
-        private void OnChannelLost(string channelKey)
-        {
-            lock (_lock)
-            {
-                if (_stopped || channelKey != _channelKey)
-                {
-                    return;
-                }
-
-                _isConsuming = false;
-            }
-
-            ScheduleRestart();
-        }
-
-        private void ScheduleRestart()
-        {
-            ThreadPool.QueueUserWorkItem(_ => RestartConsumerWithBackoff());
-        }
-
-        private void RestartConsumerWithBackoff()
-        {
-            int delay = InitialRestartDelayMs;
-
-            while (!_stopped)
-            {
-                try
-                {
-                    Log.Warn("Attempting to restart RabbitMQ consumer in " + delay + "ms...");
-                    Thread.Sleep(delay);
-
-                    lock (_lock)
-                    {
-                        if (_stopped)
-                        {
-                            return;
-                        }
-
-                        if (_channelKey != null)
-                        {
-                            _connectionHolder.RemoveChannel(_channelKey);
-                            _channelKey = null;
-                        }
-
-                        StartConsumerInternal();
-                        Log.Info("RabbitMQ consumer restarted successfully.");
-                        return;
-                    }
-                }
-                catch (InvalidOperationException ex) when (ex.Message.Contains("does not exist"))
-                {
-                    Log.Warn("Queue not found. Will retry in " + delay + "ms... (" + ex.Message + ")");
-                    delay = Math.Min(delay * 2, MaxRestartDelayMs);
-                }
-                catch (Exception ex)
-                {
-                    Log.Error("Failed to restart consumer. Will retry in " + delay + "ms...", ex);
-                    delay = Math.Min(delay * 2, MaxRestartDelayMs);
-                }
+                Log.Warn("Reconnecting...");
+                Connect();
             }
         }
 
@@ -184,18 +132,54 @@ namespace RabbitProxy.Services
             lock (_lock)
             {
                 _stopped = true;
-                _isConsuming = false;
-
-                _connectionHolder.ChannelLost -= OnChannelLost;
-
-                if (_channelKey != null)
-                {
-                    _connectionHolder.RemoveChannel(_channelKey);
-                    _channelKey = null;
-                }
-
-                _connectionHolder.Dispose();
+                CleanupChannel();
+                CleanupConnection();
             }
+        }
+
+        private void CleanupChannel()
+        {
+            if (_channel != null)
+            {
+                try
+                {
+                    if (_channel.IsOpen)
+                    {
+                        _channel.Close();
+                    }
+                    _channel.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn("Error closing channel", ex);
+                }
+                _channel = null;
+            }
+        }
+
+        private void CleanupConnection()
+        {
+            if (_connection != null)
+            {
+                try
+                {
+                    if (_connection.IsOpen)
+                    {
+                        _connection.Close();
+                    }
+                    _connection.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn("Error closing connection", ex);
+                }
+                _connection = null;
+            }
+        }
+
+        public void Dispose()
+        {
+            Stop();
         }
     }
 }

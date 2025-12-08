@@ -43,56 +43,51 @@ namespace RabbitProxy.HostedServices
                 ServerCN = _leadService.GetParameter(allegroUrl, "RabbitMQ", "ServerCN")
             };
 
-            _receiver.StartConsuming(rabbitParams, HandleMessage(allegroUrl, rabbitParams));
+            _receiver.StartConsuming(rabbitParams, (msg, channel, tag) => HandleMessage(msg, channel, tag, allegroUrl, rabbitParams.QueueName));
 
-            Log.Info("RabbitHostedService is running and listening for messages.");
+            Log.Info("RabbitHostedService started.");
         }
 
-        private Action<string, IModel, ulong> HandleMessage(string allegroUrl, RabbitConnectionParams rabbitParams)
+        private void HandleMessage(string msg, IModel channel, ulong tag, string allegroUrl, string queueName)
         {
-            return (msg, channel, tag) =>
+            try
             {
-                try
+                string tradeType = _leadService.GetParameter(allegroUrl, "RabbitMQ", "TAllowedType");
+
+                HashSet<int> allowedInstIds = null;
+                if (!string.IsNullOrWhiteSpace(tradeType))
                 {
-                    string tradeTypeToProcess = _leadService.GetParameter(allegroUrl, "RabbitMQ", "TAllowedType");
-
-                    HashSet<int> allowedInstIds = null;
-                    if (!string.IsNullOrWhiteSpace(tradeTypeToProcess))
-                    {
-                        int[] instIds = _leadService.GetInstIdsByProduct(allegroUrl, tradeTypeToProcess);
-                        allowedInstIds = new HashSet<int>(instIds);
-                    }
-
-                    string xml = _parser.ConvertMessagesToXmlFiltered(new[] { msg }, allowedInstIds);
-
-                    if (string.IsNullOrWhiteSpace(xml))
-                    {
-                        SafeAck(channel, tag);
-                        Log.Info("Message skipped because no trades matched the configured product.");
-                        return;
-                    }
-
-                    string configName = _leadService.GetParameter(allegroUrl, "RabbitMQ", "ImportConfigName");
-                    bool uploaded = _loader.UploadToUniversalLoader(allegroUrl, xml, configName);
-
-                    if (uploaded)
-                    {
-                        SafeAck(channel, tag);
-                        Log.Info("Message acknowledged. Queue: " + rabbitParams.QueueName);
-                    }
-                    else
-                    {
-                        Log.Error("Upload failed. Message left unacknowledged for retry on next run. Raw message: " + msg);
-                    }
+                    allowedInstIds = new HashSet<int>(_leadService.GetInstIdsByProduct(allegroUrl, tradeType));
                 }
-                catch (Exception ex)
+
+                string xml = _parser.ConvertMessagesToXmlFiltered(new[] { msg }, allowedInstIds);
+
+                if (string.IsNullOrWhiteSpace(xml))
                 {
-                    Log.Error("Error processing message. Message left unacknowledged for retry on next run.", ex);
+                    Ack(channel, tag);
+                    Log.Info("Message skipped - no matching trades.");
+                    return;
                 }
-            };
+
+                string configName = _leadService.GetParameter(allegroUrl, "RabbitMQ", "ImportConfigName");
+
+                if (_loader.UploadToUniversalLoader(allegroUrl, xml, configName))
+                {
+                    Ack(channel, tag);
+                    Log.Info("Message processed. Queue: " + queueName);
+                }
+                else
+                {
+                    Log.Error("Upload failed. Message left for retry. Raw: " + msg);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Error processing message. Left for retry.", ex);
+            }
         }
 
-        private void SafeAck(IModel channel, ulong tag)
+        private void Ack(IModel channel, ulong tag)
         {
             try
             {
@@ -103,7 +98,7 @@ namespace RabbitProxy.HostedServices
             }
             catch (Exception ex)
             {
-                Log.Error("Failed to acknowledge message", ex);
+                Log.Error("Failed to ack", ex);
             }
         }
     }
