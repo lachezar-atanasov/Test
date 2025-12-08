@@ -68,7 +68,7 @@ namespace RabbitProxy.HostedServices
                     if (string.IsNullOrWhiteSpace(xml))
                     {
                         SafeAck(channel, tag);
-                        Log.Info("Message skipped because no trades matched the configured product.");
+                        Log.Info("Message skipped. TradeId: " + ExtractXmlValue(msg, "tradeId") + ", InstrumentId: " + ExtractXmlValue(msg, "instrumentId"));
                         return;
                     }
 
@@ -106,6 +106,34 @@ namespace RabbitProxy.HostedServices
             catch (Exception ex)
             {
                 Log.Error("Failed to acknowledge message", ex);
+            }
+        }
+
+        private static string ExtractXmlValue(string xml, string tagName)
+        {
+            try
+            {
+                string startTag = "<" + tagName + ">";
+                string endTag = "</" + tagName + ">";
+
+                int start = xml.IndexOf(startTag);
+                if (start < 0)
+                {
+                    return "N/A";
+                }
+
+                start += startTag.Length;
+                int end = xml.IndexOf(endTag, start);
+                if (end < 0)
+                {
+                    return "N/A";
+                }
+
+                return xml.Substring(start, end - start);
+            }
+            catch
+            {
+                return "N/A";
             }
         }
     }
