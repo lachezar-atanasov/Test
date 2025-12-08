@@ -16,6 +16,7 @@ namespace RabbitProxy.Services
         private readonly object _lock = new object();
         private IConnection _connection;
         private IModel _channel;
+        private EventingBasicConsumer _consumer;
         private RabbitConnectionParams _parameters;
         private Action<string, IModel, ulong> _handler;
         private volatile bool _stopped;
@@ -39,8 +40,7 @@ namespace RabbitProxy.Services
             {
                 try
                 {
-                    CleanupChannel();
-                    CleanupConnection();
+                    Cleanup();
 
                     var factory = new ConnectionFactory
                     {
@@ -61,15 +61,19 @@ namespace RabbitProxy.Services
                     };
 
                     _connection = factory.CreateConnection();
+                    _connection.ConnectionShutdown += OnConnectionShutdown;
+                    _connection.CallbackException += OnCallbackException;
+
                     _channel = _connection.CreateModel();
+                    _channel.ModelShutdown += OnChannelShutdown;
                     _channel.BasicQos(0, 1, false);
                     _channel.QueueDeclarePassive(_parameters.QueueName);
 
-                    var consumer = new EventingBasicConsumer(_channel);
-                    consumer.Received += OnMessageReceived;
-                    consumer.Shutdown += OnConsumerShutdown;
+                    _consumer = new EventingBasicConsumer(_channel);
+                    _consumer.Received += OnMessageReceived;
+                    _consumer.Shutdown += OnConsumerShutdown;
 
-                    _channel.BasicConsume(_parameters.QueueName, false, consumer);
+                    _channel.BasicConsume(_parameters.QueueName, false, _consumer);
 
                     Log.Info("Started consuming queue '" + _parameters.QueueName + "' on " + _parameters.ServerName + ":" + _parameters.Port);
                     return;
@@ -81,6 +85,33 @@ namespace RabbitProxy.Services
                     delay = Math.Min(delay * 2, 60000);
                 }
             }
+        }
+
+        private void OnConnectionShutdown(object sender, ShutdownEventArgs e)
+        {
+            Log.Error("Connection shutdown: " + e.ReplyText + " (Initiator: " + e.Initiator + ")");
+
+            if (_stopped || e.Initiator == ShutdownInitiator.Application)
+            {
+                return;
+            }
+
+            ThreadPool.QueueUserWorkItem(_ => Reconnect());
+        }
+
+        private void OnCallbackException(object sender, CallbackExceptionEventArgs e)
+        {
+            Log.Error("Connection callback exception: " + e.Exception.Message, e.Exception);
+        }
+
+        private void OnChannelShutdown(object sender, ShutdownEventArgs e)
+        {
+            Log.Error("Channel shutdown: " + e.ReplyText + " (Initiator: " + e.Initiator + ")");
+        }
+
+        private void OnConsumerShutdown(object sender, ShutdownEventArgs e)
+        {
+            Log.Error("Consumer shutdown: " + e.ReplyText + " (Initiator: " + e.Initiator + ")");
         }
 
         private void OnMessageReceived(object sender, BasicDeliverEventArgs ea)
@@ -102,17 +133,6 @@ namespace RabbitProxy.Services
             }
         }
 
-        private void OnConsumerShutdown(object sender, ShutdownEventArgs e)
-        {
-            if (_stopped)
-            {
-                return;
-            }
-
-            Log.Error("Consumer shutdown: " + e.ReplyText);
-            ThreadPool.QueueUserWorkItem(_ => Reconnect());
-        }
-
         private void Reconnect()
         {
             lock (_lock)
@@ -132,17 +152,31 @@ namespace RabbitProxy.Services
             lock (_lock)
             {
                 _stopped = true;
-                CleanupChannel();
-                CleanupConnection();
+                Cleanup();
             }
         }
 
-        private void CleanupChannel()
+        private void Cleanup()
         {
+            if (_consumer != null)
+            {
+                try
+                {
+                    _consumer.Received -= OnMessageReceived;
+                    _consumer.Shutdown -= OnConsumerShutdown;
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn("Error unsubscribing consumer events", ex);
+                }
+                _consumer = null;
+            }
+
             if (_channel != null)
             {
                 try
                 {
+                    _channel.ModelShutdown -= OnChannelShutdown;
                     if (_channel.IsOpen)
                     {
                         _channel.Close();
@@ -155,14 +189,13 @@ namespace RabbitProxy.Services
                 }
                 _channel = null;
             }
-        }
 
-        private void CleanupConnection()
-        {
             if (_connection != null)
             {
                 try
                 {
+                    _connection.ConnectionShutdown -= OnConnectionShutdown;
+                    _connection.CallbackException -= OnCallbackException;
                     if (_connection.IsOpen)
                     {
                         _connection.Close();
