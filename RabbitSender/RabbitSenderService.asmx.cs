@@ -1,11 +1,12 @@
 using System;
 using System.Web.Services;
+using System.Web.Services.Protocols;
 using log4net;
 
 namespace RabbitSender
 {
-    [WebService(Namespace = "http://tempuri.org/", Description = "RabbitMQ Message Sender Service")]
-    [WebServiceBinding(ConformsTo = WsiProfiles.BasicProfile1_1)]
+    [WebService(Namespace = "http://rabbitsender.local/", Description = "RabbitMQ Message Sender Service")]
+    [WebServiceBinding(ConformsTo = WsiProfiles.None)]
     public class RabbitSenderService : WebService
     {
         private static readonly ILog Log = LogManager.GetLogger(typeof(RabbitSenderService));
