@@ -34,6 +34,12 @@
     <PackageReference Include="RabbitMQ.Client" Version="6.5.0" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Default.aspx.cs">
+      <DependentUpon>Default.aspx</DependentUpon>
+    </Compile>
+    <Compile Include="Default.aspx.designer.cs">
+      <DependentUpon>Default.aspx</DependentUpon>
+    </Compile>
     <Compile Include="Global.asax.cs">
       <DependentUpon>Global.asax</DependentUpon>
     </Compile>
@@ -49,6 +55,7 @@
     <Compile Include="Services\RabbitMessageSenderService.cs" />
   </ItemGroup>
   <ItemGroup>
+    <Content Include="Default.aspx" />
     <Content Include="Global.asax" />
     <Content Include="RabbitSenderService.asmx" />
     <Content Include="SendHandler.ashx" />
